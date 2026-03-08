@@ -17,6 +17,13 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
 
+      - name: Clone Obsidian vault
+        if: vars.OBSIDIAN_VAULT_REPO != ''
+        env:
+          GH_TOKEN: ${{ secrets.VAULT_PAT }}
+        run: |
+          git clone https://x-access-token:${GH_TOKEN}@github.com/${{ vars.OBSIDIAN_VAULT_REPO }}.git vault_output
+
       - name: Run script
         env:
           ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
@@ -27,8 +34,41 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+          OBSIDIAN_VAULT_REPO: ${{ vars.OBSIDIAN_VAULT_REPO }}
+          OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH }}
+          OBSIDIAN_MIN_SCORE: ${{ vars.OBSIDIAN_MIN_SCORE }}
         run: |
           printf "%b\n" "$CUSTOM_CONFIG" > config/custom.yaml
+
+          # Append obsidian config if vault repo is set
+          if [ -n "$OBSIDIAN_VAULT_REPO" ]; then
+            VAULT_DIR="vault_output/${OBSIDIAN_VAULT_PATH:-05-Arxiv-daily}"
+            MIN_SCORE="${OBSIDIAN_MIN_SCORE:-3.0}"
+            cat >> config/custom.yaml <<OBSIDIAN_EOF
+
+          obsidian:
+            enabled: true
+            output_dir: "${VAULT_DIR}"
+            min_score: ${MIN_SCORE}
+          OBSIDIAN_EOF
+          fi
+
           echo "Use custom config: "
           cat config/custom.yaml
           uv run src/zotero_arxiv_daily/main.py
+
+      - name: Push Obsidian notes to vault
+        if: vars.OBSIDIAN_VAULT_REPO != ''
+        run: |
+          cd vault_output
+          git config user.name "arxiv-daily-bot"
+          git config user.email "arxiv-daily-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No new obsidian notes to push."
+          else
+            DATE=$(date -u +"%Y.%m.%d")
+            git commit -m "arxiv-daily: ${DATE} paper notes"
+            git push
+            echo "Pushed obsidian notes for ${DATE}"
+          fi

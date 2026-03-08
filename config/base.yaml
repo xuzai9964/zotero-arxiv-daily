@@ -47,3 +47,8 @@ executor:
   max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'
+
+obsidian:
+  enabled: false # Whether to output Obsidian markdown notes. Example: true
+  output_dir: ./obsidian_output # The directory to write notes to. Overridden by the workflow to a cloned vault path.
+  min_score: 3.0 # Minimum relevance score to include a paper. Example: 3.0
