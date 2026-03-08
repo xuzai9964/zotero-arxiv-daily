@@ -8,6 +8,7 @@ import random
 from datetime import datetime
 from .reranker import get_reranker_cls
 from .construct_email import render_email
+from .construct_obsidian import output_obsidian_notes
 from .utils import send_email
 from openai import OpenAI
 from tqdm import tqdm
@@ -89,3 +90,11 @@ class Executor:
         email_content = render_email(reranked_papers)
         send_email(self.config, email_content)
         logger.info("Email sent successfully")
+
+        obsidian_cfg = getattr(self.config, 'obsidian', None)
+        if obsidian_cfg and obsidian_cfg.get('enabled', False):
+            output_dir = obsidian_cfg.get('output_dir', './obsidian_output')
+            min_score = obsidian_cfg.get('min_score', 3.0)
+            logger.info(f"Generating obsidian notes (min_score={min_score})...")
+            output_obsidian_notes(reranked_papers, output_dir, min_score)
+            logger.info("Obsidian notes generated successfully")
