@@ -8,12 +8,42 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync default branch from upstream
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream while preserving local automation
         run: |
-          gh repo sync ${{ github.repository }} --source TideDra/zotero-arxiv-daily --branch main
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/TideDra/zotero-arxiv-daily.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork already contains upstream/main."
+            exit 0
+          fi
+
+          git merge --no-ff --no-commit -X ours upstream/main
+
+          # These files are fork-local operational state. Keeping them out of the
+          # automatic merge avoids clobbering the self-hosted runner setup and
+          # prevents keep-alive-only upstream commits from causing repeat failures.
+          git restore --source=HEAD --staged --worktree \
+            .github/workflows \
+            .github/keep-alive.txt
+
+          git commit --no-edit --allow-empty
+          git push
