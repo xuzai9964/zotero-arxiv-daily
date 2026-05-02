@@ -45,5 +45,23 @@ jobs:
             .github/workflows \
             .github/keep-alive.txt
 
-          git commit --no-edit --allow-empty
+          cat > /tmp/upstream-sync-commit-message <<'EOF'
+          Merge upstream changes without replacing fork automation
+
+          The fork periodically records upstream/main as a merge parent so
+          scheduled sync stays fast-forwardable over time. Fork-local GitHub
+          workflow files and keep-alive state are restored before committing
+          because they encode this repository's runner and scheduling choices.
+
+          Constraint: This fork intentionally differs from upstream under .github for self-hosted Zotero execution.
+          Rejected: Force-sync to upstream | would remove fork-local automation.
+          Rejected: Leave branches divergent | makes every scheduled sync retry the same failure.
+          Confidence: high
+          Scope-risk: narrow
+          Directive: Preserve .github/workflows unless deliberately migrating back to upstream defaults.
+          Tested: Upstream merge command completed in the fork clone.
+          Not-tested: Live scheduled sync against a future upstream change.
+          EOF
+          sed -i 's/^          //' /tmp/upstream-sync-commit-message
+          git commit --allow-empty --file /tmp/upstream-sync-commit-message
           git push
