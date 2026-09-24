@@ -4,6 +4,7 @@ from arxiv import Result as ArxivResult
 from ..protocol import Paper
 from ..utils import extract_markdown_from_pdf, extract_tex_code_from_tar
 from tempfile import TemporaryDirectory
+from datetime import datetime
 import feedparser
 from tqdm import tqdm
 import multiprocessing
@@ -19,6 +20,29 @@ T = TypeVar("T")
 DOWNLOAD_TIMEOUT = (10, 60)
 PDF_EXTRACT_TIMEOUT = 180
 TAR_EXTRACT_TIMEOUT = 180
+
+
+def _result_from_rss(entry: feedparser.FeedParserDict) -> ArxivResult:
+    """Use the already-fetched Atom metadata when the API rejects access."""
+    paper_id = entry.id.removeprefix("oai:arXiv.org:")
+    summary = entry.summary
+    if summary.startswith("arXiv:") and "Abstract:" in summary:
+        summary = summary.partition("Abstract:")[2].strip()
+    categories = [tag.term for tag in entry.get("tags", [])]
+    return ArxivResult(
+        entry_id=f"https://arxiv.org/abs/{paper_id}",
+        updated=datetime.fromisoformat(entry.updated),
+        published=datetime.fromisoformat(entry.published),
+        title=entry.title,
+        authors=[ArxivResult.Author(name.strip()) for name in entry.author.split(",")],
+        summary=summary,
+        categories=categories,
+        primary_category=categories[0] if categories else "",
+        links=[ArxivResult.Link(
+            href=f"https://arxiv.org/pdf/{paper_id}",
+            title="pdf", rel="related", content_type="application/pdf",
+        )],
+    )
 
 
 def _download_file(url: str, path: str) -> None:
@@ -144,6 +168,20 @@ class ArxivRetriever(BaseRetriever):
                     raw_papers.extend(batch)
                     break
                 except arxiv.HTTPError as exc:
+                    if exc.status == 406:
+                        logger.warning("arXiv API returned HTTP 406; using RSS metadata for remaining papers")
+                        entries_by_id = {
+                            entry.id.removeprefix("oai:arXiv.org:"): entry
+                            for entry in feed.entries
+                        }
+                        remaining = [
+                            _result_from_rss(entries_by_id[paper_id])
+                            for paper_id in all_paper_ids[i:]
+                        ]
+                        raw_papers.extend(remaining)
+                        bar.update(len(remaining))
+                        bar.close()
+                        return raw_papers
                     if exc.status == 429 and attempt < max_batch_retries - 1:
                         wait = batch_retry_delay * (attempt + 1)
                         logger.warning(f"arXiv API 429 on batch {i // 20}, retry {attempt + 1}/{max_batch_retries} in {wait}s")
