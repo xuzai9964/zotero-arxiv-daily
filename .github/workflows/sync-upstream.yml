@@ -36,7 +36,7 @@ jobs:
             exit 0
           fi
 
-          git merge --no-ff --no-commit -X ours upstream/main
+          git merge --no-ff --no-commit -X theirs upstream/main
 
           # These files are fork-local operational state. Keeping them out of the
           # automatic merge avoids clobbering the self-hosted runner setup and

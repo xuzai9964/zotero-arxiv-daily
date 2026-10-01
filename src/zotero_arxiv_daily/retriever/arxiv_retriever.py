@@ -3,10 +3,8 @@ import arxiv
 from arxiv import Result as ArxivResult
 from ..protocol import Paper
 from ..utils import extract_markdown_from_pdf, extract_tex_code_from_tar
-from tempfile import TemporaryDirectory
-from datetime import datetime
-import feedparser
-from tqdm import tqdm
+import calendar
+from datetime import datetime, timezone
 import multiprocessing
 import os
 from queue import Empty
@@ -34,29 +32,6 @@ ARXIV_HEADER_PATTERN = re.compile(
     r"^(?:arxiv:\s*\S+(?:\s+\[[^\]]*\])?)?\s*(?:announce\s+type:\s*[\w-]+)?\s*(?:abstract:\s*)?",
     flags=re.IGNORECASE,
 )
-
-
-def _result_from_rss(entry: feedparser.FeedParserDict) -> ArxivResult:
-    """Use the already-fetched Atom metadata when the API rejects access."""
-    paper_id = entry.id.removeprefix("oai:arXiv.org:")
-    summary = entry.summary
-    if summary.startswith("arXiv:") and "Abstract:" in summary:
-        summary = summary.partition("Abstract:")[2].strip()
-    categories = [tag.term for tag in entry.get("tags", [])]
-    return ArxivResult(
-        entry_id=f"https://arxiv.org/abs/{paper_id}",
-        updated=datetime.fromisoformat(entry.updated),
-        published=datetime.fromisoformat(entry.published),
-        title=entry.title,
-        authors=[ArxivResult.Author(name.strip()) for name in entry.author.split(",")],
-        summary=summary,
-        categories=categories,
-        primary_category=categories[0] if categories else "",
-        links=[ArxivResult.Link(
-            href=f"https://arxiv.org/pdf/{paper_id}",
-            title="pdf", rel="related", content_type="application/pdf",
-        )],
-    )
 
 
 def _download_file(url: str, path: str) -> None:
@@ -289,42 +264,16 @@ class ArxivRetriever(BaseRetriever):
         if self.config.executor.debug:
             target_entries = target_entries[:10]
 
-        # Get full information of each paper from arxiv api
-        bar = tqdm(total=len(all_paper_ids))
-        max_batch_retries = 5
-        batch_retry_delay = 30
-        for i in range(0, len(all_paper_ids), 20):
-            search = arxiv.Search(id_list=all_paper_ids[i:i + 20])
-            for attempt in range(max_batch_retries):
-                try:
-                    batch = list(client.results(search))
-                    bar.update(len(batch))
-                    raw_papers.extend(batch)
-                    break
-                except arxiv.HTTPError as exc:
-                    if exc.status == 406:
-                        logger.warning("arXiv API returned HTTP 406; using RSS metadata for remaining papers")
-                        entries_by_id = {
-                            entry.id.removeprefix("oai:arXiv.org:"): entry
-                            for entry in feed.entries
-                        }
-                        remaining = [
-                            _result_from_rss(entries_by_id[paper_id])
-                            for paper_id in all_paper_ids[i:]
-                        ]
-                        raw_papers.extend(remaining)
-                        bar.update(len(remaining))
-                        bar.close()
-                        return raw_papers
-                    if exc.status == 429 and attempt < max_batch_retries - 1:
-                        wait = batch_retry_delay * (attempt + 1)
-                        logger.warning(f"arXiv API 429 on batch {i // 20}, retry {attempt + 1}/{max_batch_retries} in {wait}s")
-                        sleep(wait)
-                    else:
-                        raise
-            if i + 20 < len(all_paper_ids):
-                sleep(3)
-        bar.close()
+        seen_paper_ids = set()
+        raw_papers = []
+        for entry in target_entries:
+            raw_id = getattr(entry, "id", "") or ""
+            paper_id = raw_id.removeprefix("oai:arXiv.org:")
+            if paper_id and paper_id in seen_paper_ids:
+                continue
+            if paper_id:
+                seen_paper_ids.add(paper_id)
+            raw_papers.append(_entry_to_arxiv_result(entry))
 
         return raw_papers
 
